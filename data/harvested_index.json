@@ -11,5 +11,31 @@
       "motion"
     ],
     "registryDependencies": []
+  },
+  "aceternity:Spotlight": {
+    "name": "Spotlight",
+    "source": "aceternity",
+    "slug": "spotlight",
+    "description": "",
+    "filePath": "aceternity/spotlight.json",
+    "jsonUrl": "https://ui.aceternity.com/registry/spotlight.json",
+    "lastScanned": "2025-05-09T17:45:14.519Z",
+    "dependencies": [],
+    "registryDependencies": []
+  },
+  "shadcn:AlertDialog": {
+    "name": "Alert Dialog",
+    "source": "shadcn",
+    "slug": "alert-dialog",
+    "description": "shadcn UI alert-dialog component",
+    "filePath": "shadcn/alert-dialog.json",
+    "jsonUrl": "https://ui.shadcn.com/registry#alert-dialog",
+    "lastScanned": "2025-05-09T17:51:04.979Z",
+    "dependencies": [
+      "@radix-ui/react-alert-dialog"
+    ],
+    "registryDependencies": [
+      "button"
+    ]
   }
 }
