@@ -19,19 +19,77 @@ interface HarvestedComponentFile {
   path: string; // e.g., "components/ui/animated-pin.tsx"
   content: string;
 }
-interface HarvestedComponent {
-  name: string; // e.g., "AnimatedPin"
-  source: string; // e.g., "aceternity"
-  url: string; // Source URL
-  files: HarvestedComponentFile[];
-  dependencies?: string[]; // e.g., ["cn", "motion"]
-  lastScanned: string; // ISO date string
+
+// Interface for the main index file (harvested_index.json)
+interface IndexedComponentInfo {
+  name: string; // Display name, e.g., "3d-pin" or "Actual Component Name"
+  source: string;
+  slug: string;
+  description?: string;
+  filePath: string; // Relative path to the full JSON, e.g., "aceternity/3d-pin.json"
+  jsonUrl: string;
+  lastScanned: string;
+  dependencies?: string[];
+  registryDependencies?: string[];
 }
 
-// Simple in-memory storage for harvested components
-// Key: "source:componentName", e.g., "aceternity:AnimatedPin"
-const harvestedComponents: Record<string, HarvestedComponent> = {};
+// Interface for the full component data (e.g., data/aceternity/3d-pin.json)
+interface FullComponentFile {
+  path: string; // Target path for the file, e.g., "components/ui/3d-pin.tsx"
+  content: string;
+  type?: string; // e.g., "registry:ui"
+  target?: string; // Often same as path
+}
+interface FullComponentData {
+  name: string; // Usually the slug, e.g., "3d-pin"
+  title?: string; // Display title, e.g., "3d Pin"
+  type?: string;
+  dependencies?: string[];
+  registryDependencies?: string[];
+  files: FullComponentFile[];
+  author?: string;
+  [key: string]: any; // For other properties
+}
+
+
+// In-memory cache for the harvested_index.json content
+// Key: "source:componentNameKey", e.g., "aceternity:3DPin"
+const inMemoryIndexCache: Record<string, IndexedComponentInfo> = {};
 const aceternityRegistryData: Record<string, string> = {}; // Cache for component name (normalized) to its slug, e.g. "3DPin": "3d-pin"
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const baseDataDir = path.join(__dirname, '..', 'data'); // Base data directory
+const indexFilePath = path.join(baseDataDir, 'harvested_index.json');
+
+
+// Function to load harvested_index.json into memory
+function loadIndexIntoMemoryCache() {
+  console.error(`Attempting to load index from ${indexFilePath}`);
+  if (fs.existsSync(indexFilePath)) {
+    try {
+      const fileContent = fs.readFileSync(indexFilePath, 'utf8');
+      const jsonData = JSON.parse(fileContent) as Record<string, IndexedComponentInfo>;
+      // Clear existing cache before loading
+      for (const key in inMemoryIndexCache) {
+        delete inMemoryIndexCache[key];
+      }
+      for (const key in jsonData) {
+        inMemoryIndexCache[key] = jsonData[key];
+      }
+      console.error(`Successfully loaded ${Object.keys(inMemoryIndexCache).length} components into memory cache from index.`);
+    } catch (error: any) {
+      console.error(`Error loading or parsing ${indexFilePath}: ${error.message}. Starting with an empty cache.`);
+      // Ensure cache is empty if loading failed
+      for (const key in inMemoryIndexCache) {
+        delete inMemoryIndexCache[key];
+      }
+    }
+  } else {
+    console.warn(`${indexFilePath} not found. Starting with an empty cache.`);
+  }
+}
+
 
 // Function to refresh the Aceternity UI registry cache
 async function refreshAceternityRegistryCache() {
@@ -89,7 +147,9 @@ async function refreshAceternityRegistryCache() {
     });
 
     if (count > 0) {
-      console.error(`Aceternity UI registry cache refreshed. Found ${count} component slugs. Example: ${Object.keys(aceternityRegistryData)[0]}: ${aceternityRegistryData[Object.keys(aceternityRegistryData)[0]]}`);
+      const firstKey = Object.keys(aceternityRegistryData)[0];
+      const exampleEntry = firstKey ? `${firstKey}: ${aceternityRegistryData[firstKey]}` : "N/A";
+      console.error(`Aceternity UI registry cache refreshed. Found ${count} component slugs. Example: ${exampleEntry}`);
     } else {
       console.warn("No components found in Aceternity UI registry. Check selectors or page structure.");
     }
@@ -175,10 +235,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
       const componentNameKey = rawComponentName.replace(/\s+/g, '').replace(/[.-]/g, '');
 
-      const __filename = fileURLToPath(import.meta.url);
-      const __dirname = path.dirname(__filename);
-      const dataDir = path.join(__dirname, '..', 'data');
-      const markdownFilePath = path.join(dataDir, 'harvested-components.md');
+      const sourceDataDir = path.join(baseDataDir, 'aceternity'); // Source-specific directory
       const scanDate = new Date().toISOString();
       
       let finalUrlToFetch: string | undefined;
@@ -192,107 +249,80 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
       // END TEMPORARY HARDCODING
 
-      if (slug) {
-        finalUrlToFetch = `https://ui.aceternity.com/registry/${slug}.json`;
-        console.error(`Found '${rawComponentName}' (key: ${componentNameKey}, slug: ${slug}) in registry or by temp hardcode. Attempting to fetch JSON from: ${finalUrlToFetch}`);
-        try {
-          const response = await axios.get(finalUrlToFetch);
-          componentData = response.data; // This should be the JSON object
-          console.error(`Successfully fetched JSON for ${rawComponentName}`);
-        } catch (jsonError: any) {
-          console.error(`Failed to fetch JSON for ${rawComponentName} from ${finalUrlToFetch}: ${jsonError.message}.`);
-          if (providedComponentURL) {
-            console.warn(`Falling back to provided HTML URL for HTML scraping (not implemented): ${providedComponentURL}`);
-            finalUrlToFetch = providedComponentURL; 
-            throw new McpError(ErrorCode.InternalError, `Failed to fetch JSON for ${rawComponentName}. HTML fallback for ${providedComponentURL} not implemented yet.`);
-          } else {
-            throw new McpError(ErrorCode.InternalError, `Component ${rawComponentName} JSON at ${finalUrlToFetch} not found or failed to fetch, and no fallback URL provided.`);
-          }
-        }
-      } else { // Not in registry and not the temporary hardcoded component
-        console.error(`'${rawComponentName}' (key: ${componentNameKey}) not found in registry cache and not hardcoded.`);
+      if (!slug) { // If still no slug after potential hardcoding
+        console.error(`'${rawComponentName}' (key: ${componentNameKey}) not found in registry and not hardcoded.`);
         if (!providedComponentURL) {
           throw new McpError(ErrorCode.InvalidParams, `'${rawComponentName}' not in registry and no componentURL provided.`);
         }
-        finalUrlToFetch = providedComponentURL;
-        console.error(`Proceeding with provided URL for HTML scraping (not implemented): ${finalUrlToFetch}`);
-        throw new McpError(ErrorCode.InternalError, `Component ${rawComponentName} not in registry. HTML scraping from ${finalUrlToFetch} not implemented yet.`);
+        // Logic for HTML scraping from providedComponentURL would go here (future enhancement)
+        throw new McpError(ErrorCode.InternalError, `Component ${rawComponentName} not in registry, and HTML scraping from provided URL not implemented yet.`);
       }
 
-      if (!componentData) {
-         throw new McpError(ErrorCode.InternalError, "Could not obtain component data.");
-      }
+      finalUrlToFetch = `https://ui.aceternity.com/registry/${slug}.json`;
+      console.error(`Attempting to fetch JSON for '${rawComponentName}' (slug: ${slug}) from: ${finalUrlToFetch}`);
 
       try {
-        // Ensure data directory exists
-        if (!fs.existsSync(dataDir)) {
-          fs.mkdirSync(dataDir, { recursive: true });
+        const response = await axios.get(finalUrlToFetch);
+        componentData = response.data; // This should be the JSON object
+        console.error(`Successfully fetched JSON for ${rawComponentName}`);
+
+        // Ensure base data directory and source-specific directory exist
+        if (!fs.existsSync(baseDataDir)) {
+          fs.mkdirSync(baseDataDir, { recursive: true });
+        }
+        if (!fs.existsSync(sourceDataDir)) {
+          fs.mkdirSync(sourceDataDir, { recursive: true });
         }
 
-        // Construct Markdown content from the fetched JSON data
-        let markdownEntry = `
-## ${componentData.name || rawComponentName} (aceternity)
+        // Save the full JSON to its own file
+        const componentJsonFilePath = path.join(sourceDataDir, `${slug}.json`);
+        fs.writeFileSync(componentJsonFilePath, JSON.stringify(componentData, null, 2), 'utf8');
+        console.error(`Saved component JSON to ${componentJsonFilePath}`);
 
-- **Source JSON URL**: ${finalUrlToFetch}
-- **Scanned**: ${scanDate}
-`;
-        if (componentData.description) {
-          markdownEntry += `- **Description**: ${componentData.description}\n`;
+        // Update the central index file
+        let indexData: Record<string, any> = {};
+        if (fs.existsSync(indexFilePath)) {
+          try {
+            indexData = JSON.parse(fs.readFileSync(indexFilePath, 'utf8'));
+          } catch (e) {
+            console.error(`Error parsing existing index file ${indexFilePath}, starting new index.`, e);
+            indexData = {};
+          }
         }
-        if (componentData.dependencies && componentData.dependencies.length > 0) {
-          markdownEntry += `- **Dependencies**: ${componentData.dependencies.join(', ')}\n`;
-        }
-        if (componentData.registryDependencies && componentData.registryDependencies.length > 0) {
-          markdownEntry += `- **Registry Dependencies**: ${componentData.registryDependencies.join(', ')}\n`;
-        }
-        markdownEntry += "\n";
-
-        if (componentData.files && Array.isArray(componentData.files)) {
-          componentData.files.forEach((file: { name: string; content: string; path?: string; }) => { // Assuming structure from shadcn/ui registry
-            const filePath = file.path || `components/ui/${file.name}`; // Guess path if not provided
-            markdownEntry += `### File: ${filePath}\n`;
-            markdownEntry += `\`\`\`tsx\n${file.content}\n\`\`\`\n\n`;
-          });
-        }
-        markdownEntry += "---\n";
         
-        fs.appendFileSync(markdownFilePath, markdownEntry, 'utf8');
-
-        // Update in-memory store
-        const componentStorageKey = `aceternity:${componentNameKey}`; 
-        harvestedComponents[componentStorageKey] = {
-          name: componentData.name || rawComponentName,
+        const componentStorageKey = `aceternity:${componentNameKey}`;
+        const newIndexEntry: IndexedComponentInfo = {
+          name: componentData.title || componentData.name || rawComponentName, // Prefer title, then name from JSON, then raw
           source: "aceternity",
-          url: finalUrlToFetch, // Store the JSON URL
-          files: componentData.files?.map((f: any) => ({ path: f.path || `components/ui/${f.name}`, content: f.content })) || [],
-          dependencies: componentData.dependencies,
+          slug: slug, // slug from registry or hardcoded
+          description: componentData.description || "",
+          filePath: path.relative(baseDataDir, componentJsonFilePath), // Store relative path
+          jsonUrl: finalUrlToFetch,
           lastScanned: scanDate,
+          dependencies: componentData.dependencies || [],
+          registryDependencies: componentData.registryDependencies || []
         };
+        indexData[componentStorageKey] = newIndexEntry;
+        fs.writeFileSync(indexFilePath, JSON.stringify(indexData, null, 2), 'utf8');
+        console.error(`Updated index file at ${indexFilePath}`);
+        
+        // Update in-memory cache
+        inMemoryIndexCache[componentStorageKey] = newIndexEntry;
 
         return {
-          content: [{ type: "text", text: `Successfully processed JSON for '${componentData.name || rawComponentName}' and appended to ${markdownFilePath}.` }],
+          content: [{ type: "text", text: `Successfully processed JSON for '${newIndexEntry.name}', saved to ${componentJsonFilePath}, and updated index.` }],
         };
 
-      } catch (error: any) { // Catch errors related to file writing or data processing
-        console.error(`Error processing or storing data for ${rawComponentName}:`, error);
-        let errorMessage = `Failed to process or store data for ${rawComponentName}.`;
-        if (error instanceof Error) {
+      } catch (error: any) { 
+        console.error(`Error during fetching, processing, or storing data for ${rawComponentName} (URL: ${finalUrlToFetch}):`, error);
+        let errorMessage = `Failed to process component ${rawComponentName}.`;
+        if (axios.isAxiosError(error)) {
+          errorMessage += ` Axios error: ${error.message} (URL: ${finalUrlToFetch})`;
+        } else if (error instanceof Error) {
           errorMessage += ` Error: ${error.message}`;
         }
-        // Log failure to Markdown
-        try {
-          const errorMarkdownEntry = `
-## ${rawComponentName} (aceternity) - FAILED PROCESSING
-
-- **Source URL**: ${finalUrlToFetch}
-- **Scanned**: ${scanDate}
-- **Error**: ${errorMessage}
----
-`;
-          fs.appendFileSync(markdownFilePath, errorMarkdownEntry, 'utf8');
-        } catch (fileError: any) {
-          console.error(`Error writing processing failure to Markdown:`, fileError);
-        }
+        // Optionally, log failure to a separate error log or a section in a general log file
+        // For now, just throw McpError
         throw new McpError(ErrorCode.InternalError, errorMessage);
       }
     }
@@ -301,7 +331,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const args = request.params.arguments as { source?: string } | undefined;
       const sourceFilter = args?.source || "all";
       
-      const componentsToList = Object.values(harvestedComponents).filter(comp => 
+      const componentsToList = Object.values(inMemoryIndexCache).filter(comp => 
         sourceFilter === "all" || comp.source === sourceFilter
       );
 
@@ -309,7 +339,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return { content: [{ type: "text", text: "No components harvested yet." }] };
       }
 
-      const listText = componentsToList.map(c => `- ${c.name} (from ${c.source}, scanned ${c.lastScanned})`).join("\n");
+      const listText = componentsToList.map(c => `- ${c.name} (Source: ${c.source}, Slug: ${c.slug}, Scanned: ${new Date(c.lastScanned).toLocaleString()})`).join("\n");
       return { content: [{ type: "text", text: `Available components:\n${listText}` }] };
     }
 
@@ -318,21 +348,39 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       if (!rawComponentNameFromArgs) {
         throw new McpError(ErrorCode.InvalidParams, "componentName is required.");
       }
-      // Normalize the input componentName to match the key used during storage
       const componentNameKeyForLookup = rawComponentNameFromArgs.replace(/\s+/g, '').replace(/[.-]/g, '');
       const componentStorageLookupKey = `aceternity:${componentNameKeyForLookup}`;
       
-      const component = harvestedComponents[componentStorageLookupKey];
+      const indexedInfo = inMemoryIndexCache[componentStorageLookupKey];
 
-      if (!component) {
+      if (!indexedInfo) {
         return {
-          content: [{ type: "text", text: `Component '${rawComponentNameFromArgs}' (normalized key: ${componentNameKeyForLookup}) from Aceternity not found. Try scanning it first.` }],
+          content: [{ type: "text", text: `Component '${rawComponentNameFromArgs}' (key: ${componentStorageLookupKey}) not found in index. Try scanning it first.` }],
           isError: true,
         };
       }
 
-      // Use component.name (which is from the JSON or rawComponentName if JSON had no name) for the prompt
-      let prompt = `You are given a task to integrate the '${component.name}' React component from Aceternity UI into your codebase.\n\n`;
+      const fullComponentJsonPath = path.join(baseDataDir, indexedInfo.filePath);
+      if (!fs.existsSync(fullComponentJsonPath)) {
+        return {
+          content: [{ type: "text", text: `Component data file not found at ${fullComponentJsonPath} for '${indexedInfo.name}'. Index might be stale.` }],
+          isError: true,
+        };
+      }
+
+      let componentData: FullComponentData;
+      try {
+        componentData = JSON.parse(fs.readFileSync(fullComponentJsonPath, 'utf8')) as FullComponentData;
+      } catch (e: any) {
+        return {
+          content: [{ type: "text", text: `Error parsing component data file ${fullComponentJsonPath}: ${e.message}` }],
+          isError: true,
+        };
+      }
+      
+      const displayName = componentData.title || componentData.name || rawComponentNameFromArgs;
+
+      let prompt = `You are given a task to integrate the '${displayName}' React component from Aceternity UI into your codebase.\n\n`;
       prompt += `Please verify your project has the following setup:\n`;
       prompt += `- shadcn/ui project structure (check for components.json, lib/utils.ts)\n`;
       prompt += `- Tailwind CSS (check for tailwind.config.ts)\n`;
@@ -341,12 +389,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       prompt += `Determine the default path for components (usually 'components/ui' or as specified in components.json).\n`;
       prompt += `If the default path for components is not 'components/ui', explain why it's important to use a consistent location like 'components/ui' for shadcn/ui components.\n\n`;
       
-      component.files.forEach(file => {
-        prompt += `Copy-paste this component to '${file.path}':\n`;
+      componentData.files.forEach(file => {
+        // Use file.path (which is the target path like components/ui/name.tsx)
+        prompt += `Copy-paste this component to '${file.path}':\n`; 
         prompt += `File content:\n\`\`\`tsx\n${file.content}\n\`\`\`\n\n`;
       });
 
-      if (component.dependencies?.includes("cn")) {
+      if (componentData.dependencies?.includes("cn") || componentData.files.some(f => f.content.includes("@/lib/utils") || f.content.includes("lib/utils"))) {
         prompt += `This component uses the 'cn' utility function. Ensure you have 'lib/utils.ts' set up by shadcn/ui, which typically contains:\n`;
         prompt += `\`\`\`ts\n`;
         prompt += `import { type ClassValue, clsx } from "clsx"\n`;
@@ -356,8 +405,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         prompt += `}\n`;
         prompt += `\`\`\`\n\n`;
       }
-      prompt += `After adding the files, import and use the main component (e.g., '${component.name}') in your application where needed.`;
-
+      prompt += `After adding the files, import and use the main component (e.g., '${displayName}') in your application where needed.`;
 
       return { content: [{ type: "text", text: prompt }] };
     }
@@ -378,7 +426,8 @@ async function main() {
     await server.close();
     process.exit(0);
   });
-  await refreshAceternityRegistryCache(); // Call on server startup
+  await refreshAceternityRegistryCache(); // Refresh Aceternity component slugs
+  loadIndexIntoMemoryCache(); // Load existing harvested components index
   await server.connect(transport);
   console.error('Component Harvester MCP server running on stdio');
 }

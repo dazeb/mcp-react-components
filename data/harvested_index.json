@@ -1,0 +1,15 @@
+{
+  "aceternity:3DPin": {
+    "name": "3d-pin",
+    "source": "aceternity",
+    "slug": "3d-pin",
+    "description": "",
+    "filePath": "aceternity/3d-pin.json",
+    "jsonUrl": "https://ui.aceternity.com/registry/3d-pin.json",
+    "lastScanned": "2025-05-09T16:21:11.605Z",
+    "dependencies": [
+      "motion"
+    ],
+    "registryDependencies": []
+  }
+}
