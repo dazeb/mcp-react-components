@@ -45,8 +45,8 @@ graph TD
         direction LR
         A1[Initiate] --> A2[Fetch HTML from aceternity.com/registry via Axios]
         A2 --> A3[Parse HTML with Cheerio]
-        A3 --> A4["Extract Component Names & Slugs (e.g., 3D Pin becomes 3d-pin)"]
-        A4 --> A5[Update In-Memory Slug Cache: `aceternityRegistryData`]
+        A3 --> A4[Extract Component Names & Slugs]
+        A4 --> A5[Update In-Memory Slug Cache]
     end
     A5 --> A6[Server Ready for Component Scan Requests]
 ```
@@ -59,17 +59,17 @@ Once an agent requests a specific component (e.g., "3D Pin"), the server uses it
 
 ```mermaid
 graph TD
-    B0[Agent Request: `scan_aceternity_component(name="3D Pin")`] --> B1[MCP Server Receives Request]
-    B1 --> B2{Component Name in `aceternityRegistryData` Cache?}
-    B2 -- Yes, Slug Found! --> B3[Construct JSON URL: aceternity.com/registry/slug.json]
+    B0[Agent Request: scan_aceternity_component] --> B1[MCP Server Receives Request]
+    B1 --> B2{Component Name in Registry Cache?}
+    B2 -- Yes --> B3[Construct JSON URL]
     B3 --> B4[Fetch Structured JSON via Axios]
-    B4 -- JSON Data --> B5[Parse JSON (name, files, code, dependencies)]
-    B5 --> B6[Format & Append to `data/harvested-components.md`]
-    B6 --> B7[Update In-Memory `harvestedComponents` Cache]
-    B7 --> B8[Report Success to Agent ✅]
-    B2 -- No, Slug Not Found --> B9{Fallback URL Provided by Agent?}
-    B9 -- Yes --> B10[Attempt HTML Scraping of Fallback URL (Future Feature)]
-    B9 -- No --> B11[Report "Not Found in Registry" Error to Agent ❌]
+    B4 -- JSON Data --> B5[Parse JSON data]
+    B5 --> B6[Format & Store Component Data]
+    B6 --> B7[Update In-Memory Cache]
+    B7 --> B8[Report Success to Agent]
+    B2 -- No --> B9{Fallback URL Provided?}
+    B9 -- Yes --> B10[Attempt HTML Scraping]
+    B9 -- No --> B11[Report Not Found Error]
 ```
 - **The Power of JSON**: Aceternity UI provides detailed JSON files for each component. This is much more reliable than trying to scrape code from HTML pages!
 - **Data Extracted**: Includes the official component name, description, an array of `files` (each with a `name`, `path`, and `content`), `dependencies`, and `registryDependencies`.
@@ -102,12 +102,12 @@ The `get_aceternity_component_prompt` tool is the final step, transforming store
 
 ```mermaid
 graph TD
-    C1[Agent Request: `get_aceternity_component_prompt(name="3D Pin")`] --> C2[MCP Server Receives Request]
-    C2 --> C3[Lookup Normalized "3DPin" in `harvestedComponents` Cache]
-    C3 -- Found! --> C4[Retrieve Stored Component Data (Code, Files, Dependencies)]
-    C4 --> C5[Dynamically Construct Detailed Prompt String]
-    C5 --> C6[Return Prompt to Agent 📝]
-    C3 -- Not Found --> C7[Report "Component Not Scanned" Error to Agent ⚠️]
+    C1[Agent Request: get_component_prompt] --> C2[MCP Server Receives Request]
+    C2 --> C3[Lookup Component in Cache]
+    C3 -- Found --> C4[Retrieve Stored Component Data]
+    C4 --> C5[Construct Detailed Prompt]
+    C5 --> C6[Return Prompt to Agent]
+    C3 -- Not Found --> C7[Report Component Not Scanned Error]
 ```
 - **The Prompt Includes**:
     - Verification steps for project prerequisites (shadcn/ui, Tailwind CSS, TypeScript).
