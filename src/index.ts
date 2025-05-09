@@ -483,21 +483,73 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
         
         const slug = registryEntry.name; // slug is the 'name' field from the registry entry
+        const docPageUrl = `https://ui.shadcn.com/docs/components/${slug}`;
+        console.error(`Attempting to scrape Shadcn component '${displayNameForNormalization}' from doc page: ${docPageUrl}`);
 
-        // For Shadcn, we don't fetch a further [slug].json. The registryEntry is the data.
-        // We will save this registryEntry itself as the component's JSON data.
+        let scrapedFiles: FullComponentFile[] = [];
+        try {
+            const pageResponse = await axios.get(docPageUrl);
+            const html = pageResponse.data;
+            const $ = cheerio.load(html);
+
+            // Attempt to find code blocks, typically within <pre data-language="tsx">
+            // The Shadcn UI docs often have attributes like __src__ or a title div for file names
+            $('div[data-rehype-pretty-code-fragment] pre[data-language="tsx"]').each((_idx, el) => {
+                const rawCode = $(el).find('code').text(); // Or extract from __rawString__ if that's more reliable
+                let filePath = `components/ui/${slug}.tsx`; // Default path
+
+                // Try to get path from __src__ attribute on <pre> or its parent with data-rehype-pretty-code-title
+                const srcAttr = $(el).attr('__src__');
+                if (srcAttr) {
+                    // Example __src__: "registry/default/ui/accordion.tsx" or "registry/new-york/ui/accordion.tsx"
+                    // We want to map this to something like "components/ui/accordion.tsx"
+                    const parts = srcAttr.split('/');
+                    if (parts.length >= 3 && parts[parts.length-2] === 'ui') {
+                        filePath = `components/ui/${parts[parts.length-1]}`;
+                    }
+                } else {
+                    // Fallback: check for a title div sibling to the pre block
+                    const titleEl = $(el).siblings('div[data-rehype-pretty-code-title]');
+                    if (titleEl.length > 0) {
+                        const titlePath = titleEl.text().trim();
+                        // Example titlePath: "components/ui/accordion.tsx"
+                        if (titlePath.startsWith("components/ui/")) {
+                           filePath = titlePath;
+                        }
+                    }
+                }
+                
+                if (rawCode) {
+                    scrapedFiles.push({
+                        path: filePath,
+                        content: rawCode.trim(), // Trim to remove potential leading/trailing newlines
+                        type: "registry:ui" // Assuming it's a UI component
+                    });
+                }
+            });
+
+            if (scrapedFiles.length === 0) {
+                console.warn(`No TSX code blocks found on ${docPageUrl}. Storing metadata only.`);
+                 scrapedFiles = registryEntry.files.map(f => ({ path: f, content: `// Code for ${f} could not be scraped. Install via 'npx shadcn-ui@latest add ${slug}'`}));
+            }
+
+        } catch (scrapeError: any) {
+            console.error(`Error scraping Shadcn component page ${docPageUrl}: ${scrapeError.message}`);
+            // Fallback to metadata if scraping fails
+            scrapedFiles = registryEntry.files.map(f => ({ path: f, content: `// Code for ${f} could not be scraped due to error: ${scrapeError.message}. Install via 'npx shadcn-ui@latest add ${slug}'`}));
+        }
+        
         const componentDataForStorage: FullComponentData = {
             name: slug,
-            title: displayNameForNormalization, // Use the generated display name
+            title: displayNameForNormalization,
             type: registryEntry.type,
             dependencies: registryEntry.dependencies,
             registryDependencies: registryEntry.registryDependencies,
-            files: registryEntry.files.map(f => ({ path: f, content: `// Content for ${f} is typically added by 'npx shadcn-ui@latest add ${slug}'`})),
-            author: "shadcn", // Or similar
-            // Add any other relevant fields from registryEntry if needed for FullComponentData
+            files: scrapedFiles, // Use scraped files
+            author: "shadcn",
         };
         
-        console.error(`Using registry data for shadcn component '${normalizedName}' (slug: ${slug})`);
+        console.error(`Processed Shadcn component '${displayNameForNormalization}' (slug: ${slug}) by scraping.`);
 
         // Create directory for shadcn components if it doesn't exist
         const sourceDataDir = path.join(baseDataDir, 'shadcn');
@@ -610,32 +662,37 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       prompt += `Determine the default path for components (usually 'components/ui' or as specified in components.json).\n`;
       prompt += `If the default path for components is not 'components/ui', explain why it's important to use a consistent location like 'components/ui' for shadcn/ui components.\n\n`;
 
-      // For Shadcn, the prompt should guide CLI usage, but can list files/dependencies from stored metadata
-      prompt += `To add the '${displayName}' component to your project, run the following command:\n\n`;
-      prompt += `\`\`\`bash\nnpx shadcn-ui@latest add ${indexedInfo.slug}\n\`\`\`\n\n`;
-      prompt += `This command will install the component and its necessary dependencies into your project.\n\n`;
-      
-      if (componentData.files && componentData.files.length > 0) {
-        prompt += `The following file(s) will typically be added or modified in your project (usually under 'components/ui'):\n`;
+      // Shadcn prompt now includes scraped code if available
+      if (componentData.files && componentData.files.some(f => !f.content.startsWith("// Code for") && !f.content.startsWith("// Content for"))) {
         componentData.files.forEach(file => {
-          // file.path is now just a string like "ui/accordion.tsx" from the main registry
-          prompt += `- ${file.path}\n`;
+          if (!file.content.startsWith("// Code for") && !file.content.startsWith("// Content for")) {
+            prompt += `Copy-paste this component to '${file.path}':\n`;
+            prompt += `File content:\n\`\`\`tsx\n${file.content}\n\`\`\`\n\n`;
+          } else {
+            prompt += `File '${file.path}' is part of this component. It's typically added by the CLI.\n`;
+            prompt += `The CLI command is: \`npx shadcn-ui@latest add ${indexedInfo.slug}\`\n\n`;
+          }
         });
-        prompt += `\n`;
+      } else {
+        // Fallback to CLI guidance if no actual code was scraped
+        prompt += `To add the '${displayName}' component to your project, run the following command:\n\n`;
+        prompt += `\`\`\`bash\nnpx shadcn-ui@latest add ${indexedInfo.slug}\n\`\`\`\n\n`;
+        prompt += `This command will install the component and its necessary dependencies into your project.\n\n`;
+        if (componentData.files && componentData.files.length > 0) {
+            prompt += `The following file(s) will typically be added or modified in your project (usually under 'components/ui'):\n`;
+            componentData.files.forEach(file => {
+              prompt += `- ${file.path}\n`;
+            });
+            prompt += `\n`;
+        }
       }
       
-      // Check for 'cn' utility based on common patterns or if explicitly listed as a dep (though usually implicit)
-      // This check might need refinement based on how dependencies are actually listed in shadcn's main registry JSON
-      let usesCn = false;
-      if (componentData.dependencies?.some(dep => dep.toLowerCase().includes("clsx") || dep.toLowerCase().includes("tailwind-merge"))) {
-          usesCn = true;
-      }
-      // A more direct check might be if 'cn' is part of a known pattern for shadcn components,
-      // or if the actual file contents (if we ever get them) include it.
-      // For now, this is a heuristic.
-      // A simpler heuristic: many shadcn components use `cn`.
-      if (true) { // Assuming most shadcn components might use cn
-        prompt += `Many shadcn UI components use the 'cn' utility function. Ensure you have 'lib/utils.ts' set up (this is done by \`npx shadcn-ui@latest init\`), which typically contains:\n`;
+      // Check for 'cn' utility.
+      // If any scraped file content includes "@lib/utils" or "cn(", assume it's used.
+      const usesCnUtil = componentData.files?.some(f => f.content?.includes("@/lib/utils") || f.content?.includes("cn("));
+
+      if (usesCnUtil || (componentData.dependencies && componentData.dependencies.some(dep => dep.toLowerCase().includes("clsx") || dep.toLowerCase().includes("tailwind-merge")))) {
+        prompt += `This component likely uses the 'cn' utility function. Ensure you have 'lib/utils.ts' set up (this is done by \`npx shadcn-ui@latest init\`), which typically contains:\n`;
         prompt += `\`\`\`ts\n`;
         prompt += `import { type ClassValue, clsx } from "clsx"\n`;
         prompt += `import { twMerge } from "tailwind-merge"\n\n`;
