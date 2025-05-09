@@ -61,7 +61,7 @@ Once an agent requests a specific component (e.g., "3D Pin"), the server uses it
 graph TD
     B0[Agent Request: `scan_aceternity_component(name="3D Pin")`] --> B1[MCP Server Receives Request]
     B1 --> B2{Component Name in `aceternityRegistryData` Cache?}
-    B2 -- Yes, Slug Found! --> B3[Construct JSON URL: aceternity.com/registry/`slug`.json]
+    B2 -- Yes, Slug Found! --> B3[Construct JSON URL: aceternity.com/registry/slug.json]
     B3 --> B4[Fetch Structured JSON via Axios]
     B4 -- JSON Data --> B5[Parse JSON (name, files, code, dependencies)]
     B5 --> B6[Format & Append to `data/harvested-components.md`]
