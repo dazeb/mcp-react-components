@@ -45,7 +45,7 @@ graph TD
         direction LR
         A1[Initiate] --> A2[Fetch HTML from aceternity.com/registry via Axios]
         A2 --> A3[Parse HTML with Cheerio]
-        A3 --> A4[Extract Component Names & Slugs (e.g., "3D Pin" -> "3d-pin")]
+        A3 --> A4["Extract Component Names & Slugs (e.g., 3D Pin becomes 3d-pin)"]
         A4 --> A5[Update In-Memory Slug Cache: `aceternityRegistryData`]
     end
     A5 --> A6[Server Ready for Component Scan Requests]
