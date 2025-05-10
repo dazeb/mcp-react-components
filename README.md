@@ -34,11 +34,11 @@ The Component Harvester enables an AI agent to:
 3.  **Store Locally**:
     *   Maintains a central index (`data/harvested_index.json`) of all processed components from all sources.
     *   Stores detailed data for each component in source-specific directories:
-        *   `data/aceternity/[slug].json`: Contains the full fetched JSON (including code) for Aceternity UI components.
-        *   `data/shadcn/[slug].json`: Contains the metadata (dependencies, file list, etc.) for Shadcn UI components, derived from their main registry.
+        *   `data/aceternity/[slug].json`: Contains the full fetched JSON (including code) for an Aceternity UI component.
+        *   `data/shadcn/[slug].json`: Stores the metadata (name, type, deps, file list) for a Shadcn UI component, as extracted from their main registry.
 4.  **Generate Integration Blueprints**: Produces detailed, step-by-step prompts:
-    *   **Aceternity UI**: Prompts include full code, file paths, and dependency information for manual integration.
-    *   **Shadcn UI**: Prompts guide the user on installing the component using the `npx shadcn-ui@latest add` command, and list expected files and dependencies.
+    *   **Aceternity UI Prompts**: Include full code, file paths, and dependency information for manual integration.
+    *   **Shadcn UI Prompts**: Guide using `npx shadcn-ui@latest add [slug]`, list expected files, and dependencies.
 
 ## How It Works 🧙‍♂️
 
@@ -86,7 +86,7 @@ graph TD
     C0[Agent Request: scan_shadcn_component] --> C1[MCP Server]
     C1 --> C2{Component in Shadcn Cache?}
     C2 -- Yes --> C3[Retrieve Metadata from Cache]
-    C3 -- Metadata (files, deps) --> C4[Store This Metadata as Component's "Data"]
+    C3 -- Metadata (files, deps) --> C4[Store This Metadata as Component's Data]
     C4 --> C5[Update Main Index & In-Memory Cache]
     C5 --> C6[Report Success]
     C2 -- No --> C7[Report Not Found]
